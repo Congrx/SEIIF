@@ -17,7 +17,7 @@ def parse_args():
     parser.add_argument("--patchsize", type=int, default=64, help="LFs are cropped into patches to save GPU memory")
     parser.add_argument("--stride", type=int, default=32, help="The stride between two test patches is set to patchsize/2")
     
-    parser.add_argument('--model_path', type=str, default='pretrain/LF-InterNet/InterNet_2xSR_5x5.pth.tar')
+    parser.add_argument('--model_path', type=str, default='pretrain/LF-InterNet/InterNet_4xSR_5x5.pth.tar')
     parser.add_argument('--save_path', type=str, default='Results/')
 
     return parser.parse_args()
