@@ -134,14 +134,13 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
 
      ```python
      # train.py
-     from model_InterNet import Net		# here model_xxx can be model_Internet, model_DFnet, model_IINet, model_LFT,
-     								    #						model_Distg, model_HLFSR, model_EPIT, model_LF_DET
+     from model_InterNet import Net		# here model_xxx can be model_Internet, model_DFnet, model_IINet, model_LFT, model_Distg, model_HLFSR, model_EPIT, model_LF_DET
      ```
-
+     
   2. Training strategy configuration
-
+  
      - first stage: continuous-scale training
-
+  
      ```python
      # train.py
      def parse_args():
@@ -159,11 +158,11 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
          
          return parser.parse_args()
      ```
-
+  
      - second stage: fine-tuning fixed-scale training
-
+  
        Note set `finetune_factor` as the target upscale factor for fixed-scale LFSSR task (The following setting takes `2` as target upscale factor).  
-
+  
      ```python
      # train.py
      def parse_args():
@@ -181,9 +180,9 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
          
          return parser.parse_args()
      ```
-
+  
   3. Other configuration
-
+  
      ```python
      # train.py
      def parse_args():
@@ -202,9 +201,9 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
          
          return parser.parse_args()
      ```
-
+  
   4. Start training
-
+  
      ```shell
      python train.py
      ```
@@ -225,13 +224,12 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
 
      ```python
      # test.py
-     from model_InterNet import Net		# here model_xxx can be model_Internet, model_DFnet, model_IINet, model_LFT,
-     								    #						model_Distg, model_HLFSR, model_EPIT, model_LF_DET
+     from model_InterNet import Net		# here model_xxx can be model_Internet, model_DFnet, model_IINet, model_LFT, model_Distg, model_HLFSR, model_EPIT, model_LF_DET
      ```
-
-  2. test configuration
-
-     ```python
+     
+2. test configuration
+  
+   ```python
      # test.py
      def parse_args():
          parser = argparse.ArgumentParser()
@@ -260,14 +258,14 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
          
          return parser.parse_args()
      ```
-
-  3. Start testing
-
-     ```shell
+  
+3. Start testing
+  
+   ```shell
      python test.py
      ```
-
-     
+  
+   
 
 
 ## Acknowledgement
