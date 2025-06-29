@@ -102,7 +102,10 @@ def feed_data(label,scale,cfg):
 
 
 def train(cfg, train_sets, test_Names, test_loaders):
-
+    
+    if os.path.exists('log') == False:
+        os.makedirs('log')
+    
     net = Net(cfg.angRes)
     net.to(cfg.device)
     cudnn.benchmark = True
