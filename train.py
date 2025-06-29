@@ -43,7 +43,7 @@ def parse_args():
     parser.add_argument('--n_steps', type=int, default=5, help='number of epochs to update learning rate')
     parser.add_argument('--gamma', type=float, default=0.5, help='learning rate decaying factor')
     parser.add_argument('--load_pretrain', type=bool, default=True)
-    parser.add_argument('--model_path', type=str, default='./log/InterNet_ArbitrarySR_5x5_epoch_18.pth.tar')
+    parser.add_argument('--model_path', type=str, default='./log/InterNet_ArbitrarySR_5x5_epoch_101.pth.tar')
     '''
 
     return parser.parse_args()
