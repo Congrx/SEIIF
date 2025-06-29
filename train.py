@@ -11,7 +11,7 @@ from math import sqrt
 from collections import OrderedDict
 
 def parse_args():
-    parser = argparse.ArgumentParser() 
+    parser = argparse.ArgumentParser()  
     parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument("--angRes", type=int, default=5, help="angular resolution")
     parser.add_argument('--model_name', type=str, default='InterNet')
