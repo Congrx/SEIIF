@@ -37,7 +37,7 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
 - pytorch 1.8.0 + torchvision 0.9.0 + cuda 12.2 + python 3.8.19
 - matlab 
 
-### Training and Test Data（涉及到训练数据的生成）
+### Training and Test Data
 
 - #### Training Data
 
@@ -138,7 +138,7 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
      								    #						model_Distg, model_HLFSR, model_EPIT, model_LF_DET
      ```
 
-  2. Training strategy configuration 训练选择（第一阶段+微调）
+  2. Training strategy configuration
 
      - first stage: continuous-scale training
 
@@ -209,7 +209,7 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
      python train.py
      ```
 
-### Test（涉及到所有checkpoint文件）
+### Test
 
 - #### Pretrained model
 
