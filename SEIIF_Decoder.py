@@ -67,6 +67,104 @@ class MLPRefiner(nn.Module):
             raise TypeError(f'"pretrained" must be a str or None. '
                             f'But received {type(pretrained)}.')
 
+def horizontal_sampling(fea,WW):     
+    b, c, h, w = fea.shape    
+    coord_highres = make_coord((h, WW)).repeat(b, 1, 1).clamp(-1 + 1e-6, 1 - 1e-6).cuda()     
+    feat_coord = make_coord((h,w), flatten=False).cuda().permute(2, 0, 1).unsqueeze(0).expand(b, 2, h, w)     
+    high_fea = F.grid_sample(fea, coord_highres.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
+    high_fea = high_fea[:, :, 0, :].permute(0,2,1)     
+    high_coord = F.grid_sample(feat_coord, coord_highres.flip(-1).unsqueeze(1),mode='nearest', align_corners=False)
+    high_coord = high_coord[:, :, 0, :].permute(0, 2, 1)    
+    relative_coord = coord_highres - high_coord   
+    relative_coord[:,:,0] *= h
+    relative_coord[:,:,1] *= w
+    cell = torch.ones_like(relative_coord)
+    cell[:,:,0] *= 2 / h * h
+    cell[:,:,1] *= 2 / WW * w
+    inp = torch.cat([high_fea, relative_coord, cell], dim=-1)
+    return inp     
+
+def vertical_sampling(fea,HH):      
+    b, c, h, w = fea.shape    
+    coord_highres = make_coord((HH, w)).repeat(b, 1, 1).clamp(-1 + 1e-6, 1 - 1e-6).cuda()     
+    feat_coord = make_coord((h,w), flatten=False).cuda().permute(2, 0, 1).unsqueeze(0).expand(b, 2, h, w)     
+    high_fea = F.grid_sample(fea, coord_highres.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
+    high_fea = high_fea[:, :, 0, :].permute(0,2,1)      
+    high_coord = F.grid_sample(feat_coord, coord_highres.flip(-1).unsqueeze(1),mode='nearest', align_corners=False)
+    high_coord = high_coord[:, :, 0, :].permute(0, 2, 1)   
+    relative_coord = coord_highres - high_coord  
+    relative_coord[:,:,0] *= h
+    relative_coord[:,:,1] *= w
+    cell = torch.ones_like(relative_coord)
+    cell[:,:,0] *= 2 / HH * h
+    cell[:,:,1] *= 2 / w * w
+    inp = torch.cat([high_fea, relative_coord, cell], dim=-1)
+    return inp      
+
+def generate_epi_coord(coord_highres, delta_ang, delta_spa, r_ang, r_spa, slope):
+    coord_ = coord_highres.clone()
+    ang_coord = coord_[:,:,0].clone() + delta_ang * r_ang
+    spa_coord = coord_[:,:,1].clone() + delta_spa * r_spa
+    if delta_ang == 1:                  
+        overarea_coord = ang_coord > 1    
+        ang_coord = ang_coord - overarea_coord * (delta_ang * r_ang + 2 * r_ang)   
+        spa_coord = spa_coord - overarea_coord * (delta_spa * r_spa + slope * 2 * r_spa)
+    if delta_ang == -1: 
+        overarea_coord = ang_coord < -1   
+        ang_coord = ang_coord - overarea_coord * (delta_ang * r_ang - 2 * r_ang) 
+        spa_coord = spa_coord - overarea_coord * (delta_spa * r_spa - slope * 2 * r_spa)
+    coord_[:,:,0] = ang_coord
+    coord_[:,:,1] = spa_coord
+    coord_ = coord_.clamp(-1+1e-6,1-1e-6)
+    return coord_
+
+def oriented_line_sampling(fea, Ang, Spa, line_slope):      
+    b, c, ang, spa = fea.shape      
+    r_ang = 2 / ang     
+    r_spa = 2 / spa 
+    delta_ang_list = [0,1,-1]
+    
+    eps_shift = 1e-6
+    coord_highres = make_coord((Ang, Spa)).repeat(b, 1, 1).clamp(-1 + 1e-6, 1 - 1e-6).cuda()     
+    feat_coord = make_coord((ang, spa), flatten=False).cuda().permute(2, 0, 1).unsqueeze(0).expand(b, 2, ang, spa)    
+    
+    # Calculate feature variance under all slope candidates for oriented line sampling 
+    total_sample_feature_var = []
+    for slope_item in line_slope:      
+        sample_feature_no_coord = []
+        for delta_ang in delta_ang_list:   
+            delta_spa = slope_item * delta_ang
+            coord_ = generate_epi_coord(coord_highres, delta_ang, delta_spa, r_ang, r_spa, slope_item)   
+            high_fea = F.grid_sample(fea, coord_.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
+            high_fea = high_fea[:, :, 0, :].permute(0,2,1)    
+            sample_feature_no_coord.append(high_fea)
+        sample_feature_no_coord = torch.stack(sample_feature_no_coord,dim=2)   
+        var_sample = sample_feature_no_coord.var(dim=2)        
+        var_sample = var_sample.sum(dim=-1)                  
+        total_sample_feature_var.append(var_sample)
+    total_sample_feature_var = torch.stack(total_sample_feature_var,dim=-1)  
+    _,slope_index = torch.min(total_sample_feature_var,dim=-1)     
+    point_slope = line_slope[0] + slope_index * 1
+    # Execute oriented line sampling based on minimum feature variance
+    total_sample_feature = []
+    for delta_ang in delta_ang_list:  
+        delta_spa = point_slope * delta_ang
+        coord_ = generate_epi_coord(coord_highres, delta_ang, delta_spa, r_ang, r_spa, point_slope)
+        high_fea = F.grid_sample(fea, coord_.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
+        high_fea = high_fea[:, :, 0, :].permute(0,2,1)     
+        high_coord = F.grid_sample(feat_coord, coord_.flip(-1).unsqueeze(1),mode='nearest', align_corners=False)
+        high_coord = high_coord[:, :, 0, :].permute(0, 2, 1)   
+        epi_coord = coord_highres - high_coord
+        epi_coord[:,:,0] *= ang
+        epi_coord[:,:,1] *= spa      
+        inp = torch.cat([high_fea, epi_coord], dim=-1)
+        total_sample_feature.append(inp)
+    total_sample_feature = torch.cat(total_sample_feature,dim=-1) 
+    cell_epi = torch.ones_like(epi_coord)      
+    cell_epi[:,:,0] *= 2 / Ang * ang
+    cell_epi[:,:,1] *= 2 / Spa * spa
+    total_sample_feature = torch.cat([total_sample_feature,cell_epi],dim=-1)        
+    return total_sample_feature     
 
 class LF_Decoding(nn.Module):
     def __init__(self, angRes, channel):
@@ -96,208 +194,45 @@ class LF_Decoding(nn.Module):
             line_slope = [-2,-1,0,1,2]       
         
         # SIIF branch 1: The first upsampling step in SIIF branch
-        fea_1 = fea
-        coord_highres1 = make_coord((h, WW)).repeat(B*self.angRes*self.angRes, 1, 1).clamp(-1 + 1e-6, 1 - 1e-6).cuda()     
-        feat_coord = make_coord((h,w), flatten=False).cuda().permute(2, 0, 1).unsqueeze(0).expand(B*self.angRes*self.angRes, 2, h, w)       
-        high_fea1 = F.grid_sample(fea_1, coord_highres1.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
-        high_fea1 = high_fea1[:, :, 0, :].permute(0,2,1)     
-        high_coord1 = F.grid_sample(feat_coord, coord_highres1.flip(-1).unsqueeze(1),mode='nearest', align_corners=False)
-        high_coord1 = high_coord1[:, :, 0, :].permute(0, 2, 1)   
-        spatial_coord1 = coord_highres1 - high_coord1
-        spatial_coord1[:,:,0] *= h
-        spatial_coord1[:,:,1] *= w
-        cell_spatial_1 = torch.ones_like(spatial_coord1)
-        cell_spatial_1[:,:,0] *= 2 / h * h
-        cell_spatial_1[:,:,1] *= 2 / WW * w
-        inp1 = torch.cat([high_fea1, spatial_coord1, cell_spatial_1], dim=-1)      
-        inp1 = rearrange(inp1,'(B a1 a2) (H W) C -> (B a1 a2 H W) C',a1=self.angRes,a2=self.angRes,H=h,W=WW)
-        spatial_fea1 = self.spatial_decoding_1(inp1)   
-        spatial_fea1 = rearrange(spatial_fea1, '(B a1 a2 H W) C -> B (a1 a2) C H W',a1=self.angRes,a2=self.angRes,H=h,W=WW)
-        spatial_fea1 = rearrange(spatial_fea1, 'B (a1 a2) C H W -> (B a2 W) C a1 H',a1=self.angRes,a2=self.angRes,H=h,W=WW)
-        
+        spatial_fea_hor = rearrange(horizontal_sampling(fea,WW),'(b a1 a2) (h w) c -> (b a1 a2 h w) c', a1=self.angRes,a2=self.angRes,h=h,w=WW)
+        spatial_fea_hor = self.spatial_decoding_1(spatial_fea_hor) 
+        spatial_fea_hor = rearrange(spatial_fea_hor, '(b a1 a2 h w) c -> (b a2 w) c a1 h',a1=self.angRes,a2=self.angRes,h=h,w=WW)
+
         
         # EIIF branch 1: The first upsampling step in EIIF branch
-        fea = rearrange(fea,'(B a1 a2) C H W -> (B a1 H) C a2 W',a1=self.angRes,a2=self.angRes,H=h,W=w)        
-        rv = 2 / self.angRes      
-        rw = 2 / w
-        delta_v_total = [0,1,-1]    
-        coord_highres = make_coord((self.angRes, WW)).repeat(B*self.angRes*h, 1, 1).clamp(-1 + 1e-6, 1 - 1e-6).cuda()    
-        bs, q = coord_highres.shape[:2] 
-        feat_coord = make_coord((self.angRes,w), flatten=False).cuda().permute(2, 0, 1).unsqueeze(0).expand(B*self.angRes*h, 2, self.angRes, w)      
-        # residual feature
-        high_fea_base = F.grid_sample(fea, coord_highres.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
-        high_fea_base = high_fea_base[:, :, 0, :]  
-        high_fea_base = rearrange(high_fea_base, '(B a1 H) C (a2 W) -> (B a2 W) C a1 H', a1=self.angRes,a2=self.angRes,H=h,W=WW)
-        # Calculate feature variance under all slope candidates for oriented line sampling 
-        total_sample_feature_var = []
-        for slope_item in line_slope:      
-            sample_feature_no_coord = []
-            for delta_v in delta_v_total:   
-                delta_w = slope_item * delta_v
-                coord_ = coord_highres.clone()
-                v_coord = coord_[:,:,0].clone() + delta_v * rv
-                w_coord = coord_[:,:,1].clone() + delta_w * rw
-                if delta_v == 1:              
-                    overarea_coord = v_coord > 1    
-                    v_coord[overarea_coord] -= (delta_v * rv + 2 * rv)   
-                    w_coord[overarea_coord] -= (delta_w * rw + slope_item * 2 * rw)
-                if delta_v == -1: 
-                    overarea_coord = v_coord < -1   
-                    v_coord[overarea_coord] -= (delta_v * rv - 2 * rv) 
-                    w_coord[overarea_coord] -= (delta_w * rw - slope_item * 2 * rw)
-                coord_[:,:,0] = v_coord
-                coord_[:,:,1] = w_coord
-                coord_ = coord_.clamp(-1+1e-6,1-1e-6)
-                high_fea_spatial = F.grid_sample(fea, coord_.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
-                high_fea_spatial = high_fea_spatial[:, :, 0, :].permute(0,2,1)    
-                sample_feature_no_coord.append(high_fea_spatial)
-            sample_feature_no_coord = torch.stack(sample_feature_no_coord,dim=2)   
-            var_sample = sample_feature_no_coord.var(dim=2)        
-            var_sample = var_sample.sum(dim=-1)                  
-            total_sample_feature_var.append(var_sample)
-        total_sample_feature_var = torch.stack(total_sample_feature_var,dim=-1)  
-        _,slope_index = torch.min(total_sample_feature_var,dim=-1)     
-        point_slope = line_slope[0] + slope_index * 1
-        # Execute oriented line sampling based on minimum feature variance
-        total_sample_feature = []
-        for delta_v in delta_v_total:  
-            delta_w = point_slope * delta_v
-            coord_ = coord_highres.clone()
-            v_coord = coord_[:,:,0].clone() + delta_v * rv
-            w_coord = coord_[:,:,1].clone() + delta_w * rw
-            if delta_v == 1:            
-                overarea_coord = v_coord > 1    
-                v_coord = v_coord - overarea_coord * (delta_v * rv + 2 * rv)
-                w_coord = w_coord - overarea_coord * (delta_w * rw + point_slope * 2 * rw)
-            if delta_v == -1:  
-                overarea_coord = v_coord < -1   
-                v_coord = v_coord - overarea_coord * (delta_v * rv - 2 * rv)
-                w_coord = w_coord - overarea_coord * (delta_w * rw - point_slope * 2 * rw)
-            coord_[:,:,0] = v_coord
-            coord_[:,:,1] = w_coord
-            coord_ = coord_.clamp(-1+1e-6,1-1e-6)
-            high_fea_spatial = F.grid_sample(fea, coord_.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
-            high_fea_spatial = high_fea_spatial[:, :, 0, :].permute(0,2,1)     
-            high_coord = F.grid_sample(feat_coord, coord_.flip(-1).unsqueeze(1),mode='nearest', align_corners=False)
-            high_coord = high_coord[:, :, 0, :].permute(0, 2, 1)   
-            spatial_coord = coord_highres - high_coord
-            spatial_coord[:,:,0] *= self.angRes
-            spatial_coord[:,:,1] *= w      
-            inp = torch.cat([high_fea_spatial, spatial_coord], dim=-1)
-            total_sample_feature.append(inp)
-        total_sample_feature = torch.cat(total_sample_feature,dim=-1) 
-        cell_epi_1 = torch.ones_like(spatial_coord)      
-        cell_epi_1[:,:,0] *= 2 / self.angRes * self.angRes
-        cell_epi_1[:,:,1] *= 2 / WW * w
-        total_sample_feature = torch.cat([total_sample_feature,cell_epi_1],dim=-1)
-        total_sample_feature = total_sample_feature.view(bs*q,-1)     
-        HR_LF_feat = self.epi1_decoding(total_sample_feature)   
+        fea = rearrange(fea,'(b a1 a2) c h w -> (b a1 h) c a2 w',a1=self.angRes,a2=self.angRes,h=h,w=w)
+        epipolar_fea1 = oriented_line_sampling(fea, self.angRes, WW, line_slope)
+        epipolar_fea1 = rearrange(epipolar_fea1,'(b a1 h) (a2 w) c -> (b a1 h a2 w) c', a1=self.angRes,a2=self.angRes,h=h,w=WW)  
+        epipolar_fea1 = self.epi1_decoding(epipolar_fea1)   
+        epipolar_fea1 = rearrange(epipolar_fea1, '(b a1 h a2 w) c-> (b a2 w) c a1 h', a1=self.angRes,a2=self.angRes,h=h,w=WW)
         
         # Cross-branch feature interaction between SIIF branch and EIIF branch after the first upsampling step
-        HR_LF_feat = rearrange(HR_LF_feat, '(B a2 W) C-> B C a2 W', a2=self.angRes, W=WW)
-        HR_LF_feat = rearrange(HR_LF_feat, '(B a1 H) C a2 W -> (B a2 W) C a1 H', a1=self.angRes, a2=self.angRes, H=h, W=WW)
-        HR_LF_feat = torch.cat([high_fea_base,HR_LF_feat,spatial_fea1],dim=1)
-        HR_LF_feat = rearrange(HR_LF_feat, '(B a2 W) C a1 H -> (B a2 W a1 H) C', a1=self.angRes, a2=self.angRes, H=h, W=WW)
+        # residual feature
+        coord_highres = make_coord((self.angRes, WW)).repeat(B*self.angRes*h, 1, 1).clamp(-1 + 1e-6, 1 - 1e-6).cuda()
+        high_fea_base = F.grid_sample(fea, coord_highres.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
+        high_fea_base = high_fea_base[:, :, 0, :]
+        high_fea_base = rearrange(high_fea_base, '(b a1 h) c (a2 w) -> (b a2 w) c a1 h', a1=self.angRes,a2=self.angRes,h=h,w=WW)
+        HR_LF_feat = torch.cat([high_fea_base, epipolar_fea1, spatial_fea_hor],dim=1)
+        HR_LF_feat = rearrange(HR_LF_feat, '(b a2 w) c a1 h -> (b a2 w a1 h) c', a1=self.angRes, a2=self.angRes, h=h, w=WW)
         HR_LF_feat = self.combine(HR_LF_feat)
-        HR_LF_feat = rearrange(HR_LF_feat, '(B a2 W a1 H) C -> (B a2 W) C a1 H', a1=self.angRes, a2=self.angRes, H=h, W=WW)
-        spatial_fea1 = rearrange(HR_LF_feat, '(B a2 W) C a1 H -> (B a1 a2) C H W', a1=self.angRes, a2=self.angRes, H=h, W=WW)
+        HR_LF_feat = rearrange(HR_LF_feat, '(b a2 w a1 h) c -> (b a2 w) c a1 h', a1=self.angRes, a2=self.angRes, h=h, w=WW)
+        spatial_fea = rearrange(HR_LF_feat, '(b a2 w) c a1 h -> (b a1 a2) c h w', a1=self.angRes, a2=self.angRes, h=h, w=WW)
 
         
         # SIIF branch 2: The second upsampling step in SIIF branch
-        coord_highres2 = make_coord((HH, WW)).repeat(B*self.angRes*self.angRes, 1, 1).clamp(-1 + 1e-6, 1 - 1e-6).cuda()  
-        feat_coord = make_coord((h,WW), flatten=False).cuda().permute(2, 0, 1).unsqueeze(0).expand(B*self.angRes*self.angRes, 2, h, WW)     
-        high_fea2 = F.grid_sample(spatial_fea1, coord_highres2.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
-        high_fea2 = high_fea2[:, :, 0, :].permute(0,2,1)     
-        high_coord2 = F.grid_sample(feat_coord, coord_highres2.flip(-1).unsqueeze(1),mode='nearest', align_corners=False)
-        high_coord2 = high_coord2[:, :, 0, :].permute(0, 2, 1)  
-        spatial_coord2 = coord_highres2 - high_coord2
-        spatial_coord2[:,:,0] *= h
-        spatial_coord2[:,:,1] *= WW
-        cell_spatial_2 = torch.ones_like(spatial_coord2)
-        cell_spatial_2[:,:,0] *= 2 / HH * h
-        cell_spatial_2[:,:,1] *= 2 / WW * WW
-        inp1 = torch.cat([high_fea2, spatial_coord2,cell_spatial_2], dim=-1)     
-        inp1 = rearrange(inp1,'(B a1 a2) (H W) C -> (B a1 a2 H W) C',a1=self.angRes,a2=self.angRes,H=HH,W=WW)
-        spatial_fea2 = self.spatial_decoding_2(inp1) 
-        out_1 = rearrange(spatial_fea2, '(B a1 a2 H W) C -> B (a1 a2) C H W',a1=5,a2=5,H=HH,W=WW)
+        spatial_fea_ver = rearrange(vertical_sampling(spatial_fea,HH),'(b a1 a2) (h w) c -> (b a1 a2 h w) c', a1=self.angRes,a2=self.angRes,h=HH,w=WW)
+        spatial_fea_ver = self.spatial_decoding_2(spatial_fea_ver) 
+        out_s = rearrange(spatial_fea_ver, '(b a1 a2 h w) c -> b (a1 a2) c h w',a1=self.angRes,a2=self.angRes,h=HH,w=WW)
 
         # EIIF branch 2: The second upsampling step in EIIF branch
-        ru = 2 / 5    
-        rh = 2 / h
-        delta_u_total = [0,1,-1]    
-        coord_highres = make_coord((self.angRes, HH)).repeat(B*self.angRes*WW, 1, 1).clamp(-1 + 1e-6, 1 - 1e-6).cuda()  
-        bs, q = coord_highres.shape[:2] 
-        feat_coord = make_coord((self.angRes,h), flatten=False).cuda().permute(2, 0, 1).unsqueeze(0).expand(B*self.angRes*WW, 2, self.angRes, h)  
-        # Calculate feature variance under all slope candidates for oriented line sampling 
-        total_sample_feature_var = []
-        for slope_item in line_slope:       
-            sample_feature_no_coord = []
-            for delta_u in delta_u_total:  
-                delta_h = slope_item * delta_u
-                coord_ = coord_highres.clone()
-                u_coord = coord_[:,:,0].clone() + delta_u * ru
-                h_coord = coord_[:,:,1].clone() + delta_h * rh
-                if delta_u == 1:
-                    overarea_coord = u_coord > 1    
-                    u_coord[overarea_coord] -= (delta_u * ru + 2 * ru) 
-                    h_coord[overarea_coord] -= (delta_h * rh + slope_item * 2* rh)
-                if delta_u == -1:
-                    overarea_coord = u_coord < -1  
-                    u_coord[overarea_coord] -= (delta_u * ru - 2 * ru)  
-                    h_coord[overarea_coord] -= (delta_h * rh - slope_item * 2* rh)
-                coord_[:,:,0] = u_coord
-                coord_[:,:,1] = h_coord
-                coord_ = coord_.clamp(-1+1e-6,1-1e-6)
-                high_fea_spatial = F.grid_sample(HR_LF_feat, coord_.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
-                high_fea_spatial = high_fea_spatial[:, :, 0, :].permute(0,2,1)
-                sample_feature_no_coord.append(high_fea_spatial)
-            sample_feature_no_coord = torch.stack(sample_feature_no_coord,dim=2) 
-            var_sample = sample_feature_no_coord.var(dim=2)        
-            var_sample = var_sample.sum(dim=-1)              
-            total_sample_feature_var.append(var_sample)    
-        total_sample_feature_var = torch.stack(total_sample_feature_var,dim=-1)  
-        _,slope_index = torch.min(total_sample_feature_var,dim=-1)      
-        point_slope = line_slope[0] + slope_index * 1
-        # Execute oriented line sampling based on minimum feature variance
-        total_sample_feature = []
-        for delta_u in delta_u_total:  
-            delta_h = point_slope * delta_u
-            coord_ = coord_highres.clone()
-            u_coord = coord_[:,:,0].clone() + delta_u * ru
-            h_coord = coord_[:,:,1].clone() + delta_h * rh
-            if delta_u == 1:
-                overarea_coord = u_coord > 1   
-                u_coord = u_coord - overarea_coord * (delta_u * ru + 2 * ru)
-                h_coord = h_coord - overarea_coord * (delta_h * rh + point_slope * 2* rh)
-            if delta_u == -1:
-                overarea_coord = u_coord < -1   
-                u_coord = u_coord - overarea_coord * (delta_u * ru - 2 * ru)
-                h_coord = h_coord - overarea_coord * (delta_h * rh - point_slope * 2* rh)
-            coord_[:,:,0] = u_coord
-            coord_[:,:,1] = h_coord
-            coord_ = coord_.clamp(-1+1e-6,1-1e-6)
-            high_fea_spatial = F.grid_sample(HR_LF_feat, coord_.flip(-1).unsqueeze(1), mode='nearest',align_corners=False)
-            high_fea_spatial = high_fea_spatial[:, :, 0, :].permute(0,2,1)   
-            high_coord = F.grid_sample(feat_coord, coord_.flip(-1).unsqueeze(1),mode='nearest', align_corners=False)
-            high_coord = high_coord[:, :, 0, :].permute(0, 2, 1) 
-            spatial_coord = coord_highres - high_coord
-            spatial_coord[:,:,0] *= self.angRes
-            spatial_coord[:,:,1] *= h      
-            inp = torch.cat([high_fea_spatial, spatial_coord], dim=-1)
-            total_sample_feature.append(inp)
-        total_sample_feature = torch.cat(total_sample_feature,dim=-1) 
-        cell_epi_2 = torch.ones_like(spatial_coord)
-        cell_epi_2[:,:,0] *= 2 / self.angRes * self.angRes
-        cell_epi_2[:,:,1] *= 2 / HH * h
-        total_sample_feature = torch.cat([total_sample_feature,cell_epi_2],dim=-1)
-        total_sample_feature = total_sample_feature.view(bs*q,-1)     
-        HR_LF_result = self.epi2_decoding(total_sample_feature)    
-        HR_LF_result = rearrange(HR_LF_result, '(B a1 H) C-> B C a1 H', a1=self.angRes, H=HH)
-        out_sv = rearrange(HR_LF_result, '(B a2 W) C a1 H -> B (a1 a2) C H W', a1=self.angRes, a2=self.angRes, H=HH, W=WW)
+        epipolar_fea2 = oriented_line_sampling(HR_LF_feat, self.angRes, HH, line_slope)
+        epipolar_fea2 = rearrange(epipolar_fea2,'(b a2 w) (a1 h) c -> (b a2 w a1 h) c', a1=self.angRes,a2=self.angRes,h=HH,w=WW)    
+        epipolar_fea2 = self.epi2_decoding(epipolar_fea2)    
+        out_epi = rearrange(epipolar_fea2, '(b a2 w a1 h) c -> b (a1 a2) c h w', a1=self.angRes, a2=self.angRes, h=HH, w=WW)
         
         # Final step: combine upsampling results of EIIF branch and SIIF branch
-        out = (out_sv+out_1) / 2
-        out = rearrange(out, 'B (a1 a2) C H W -> B C (a1 H) (a2 W)', a1=self.angRes, a2=self.angRes, H=HH, W=WW)
+        out = (out_epi+out_s) / 2
+        out = rearrange(out, 'b (a1 a2) c h w -> b c (a1 h) (a2 w)', a1=self.angRes, a2=self.angRes, h=HH, w=WW)
         return out
 
 def make_coord(shape, ranges=None, flatten=True):
