@@ -166,19 +166,19 @@ def train(cfg, train_sets, test_Names, test_loaders):
                     try:
                         data,label = next(data_iter_2)
                     except StopIteration:
-                        data_iter_2 = iter(DataLoader(dataset=train_sets[0], num_workers=2, batch_size=cfg.batch_size, shuffle=True))
+                        data_iter_2 = iter(train_loader_2)
                         data,label = next(data_iter_2)
                 elif scale <= 3:
                     try:
                         data,label = next(data_iter_3)
                     except StopIteration:
-                        data_iter_3 = iter(DataLoader(dataset=train_sets[1], num_workers=2, batch_size=cfg.batch_size, shuffle=True))
+                        data_iter_3 = iter(train_loader_3)
                         data,label = next(data_iter_3)
                 else:
                     try:
                         data,label = next(data_iter_4)
                     except StopIteration:
-                        data_iter_4 = iter(DataLoader(dataset=train_sets[2], num_workers=2, batch_size=cfg.batch_size, shuffle=True))
+                        data_iter_4 = iter(train_loader_4)
                         data,label = next(data_iter_4)
                 data,label,h_size,w_size,scale = feed_data(label,scale,cfg)     
                 data, label = Variable(data).to(cfg.device), Variable(label).to(cfg.device)
