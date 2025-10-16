@@ -1,6 +1,6 @@
 # SEIIF
 
-This is the official pytorch implementation repository of [Rethinking the Upsampling Process in Light Field Super-Resolution with Spatial-Epipolar Implicit Image Function.](https://ieeexplore.ieee.org/abstract/document/10143279) (ICCV 2025)
+This is the official pytorch implementation repository of [Rethinking the Upsampling Process in Light Field Super-Resolution with Spatial-Epipolar Implicit Image Function.](https://openaccess.thecvf.com//content/ICCV2025/papers/Cong_Rethinking_the_Upsampling_Process_in_Light_Field_Super-Resolution_with_Spatial-Epipolar_ICCV_2025_paper.pdf) (ICCV 2025)
 
 
 
