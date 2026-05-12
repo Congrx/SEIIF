@@ -171,7 +171,7 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
          # fine-tuning fixed-scale training
          parser.add_argument('--train_stage', type=int, default=2, help='1 means continuous-scale training and 2 means fine-tuning fixed-scale training')
          parser.add_argument("--finetune_factor", type=int, default=2, help="upscale factor for fine-tuning")
-         parser.add_argument('--lr', type=float, default=2.5e-4, help='initial learning rate')
+         parser.add_argument('--lr', type=float, default=2.5e-5, help='initial learning rate')
          parser.add_argument('--n_epochs', type=int, default=111, help='number of epochs to train')
          parser.add_argument('--n_steps', type=int, default=5, help='number of epochs to update learning rate')
          parser.add_argument('--gamma', type=float, default=0.5, help='learning rate decaying factor')
