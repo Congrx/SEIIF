@@ -227,9 +227,9 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
      from model_InterNet import Net		# here model_xxx can be model_Internet, model_DFnet, model_IINet, model_LFT, model_Distg, model_HLFSR, model_EPIT, model_LF_DET
      ```
      
-2. test configuration
+  2. test configuration
   
-   ```python
+     ```python
      # test.py
      def parse_args():
          parser = argparse.ArgumentParser()
@@ -257,11 +257,11 @@ Following [BasicLFSR](https://github.com/ZhengyuLiang24/BasicLFSR), we use five 
          parser.add_argument('--save_path', type=str, default='Results/')
          
          return parser.parse_args()
-     ```
+       ```
   
-3. Start testing
+  3. Start testing
   
-   ```shell
+     ```shell
      python test.py
      ```
   
